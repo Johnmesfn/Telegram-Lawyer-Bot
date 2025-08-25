@@ -1,3 +1,19 @@
+// 🌍 Tiny Express Web Server (for Render Free Plan)
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+  res.send('✅ Telegram Lawyer Bot is running on Render Free Plan');
+});
+
+app.listen(PORT, () => {
+  console.log(`🌍 Web server listening on port ${PORT}`);
+});
+
+// -----------------------------------------
+// 🤖 Telegram Bot Code
+// -----------------------------------------
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const mongoose = require('mongoose');
