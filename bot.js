@@ -3,6 +3,11 @@ const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Health check endpoint to keep service active
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
 app.get('/', (req, res) => {
   res.send('✅ Telegram Lawyer Bot is running on Render Free Plan');
 });
@@ -33,19 +38,60 @@ const logger = require('./utils/logger');
 const isRateLimited = require('./utils/rateLimiter');
 const { getSession, initializeCaseSession, updateSession, clearSession } = require('./utils/sessionManager');
 const { removeExpiredCasesForUser } = require('./utils/caseCleanup');
-const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { polling: true });
+
+// Create bot with better error handling
+const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, { 
+  polling: {
+    interval: 1000,
+    autoStart: true,
+    params: {
+      timeout: 10
+    }
+  }
+});
 
 // Set the bot instance for error handling
 setBotInstance(bot);
+setBotInstance(bot);
 
-// Set the bot instance for cleanup
-const { setBotInstance: setCleanupBotInstance } = require('./utils/caseCleanup');
-setCleanupBotInstance(bot);
-
-// Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
+// Connect to MongoDB with improved error handling
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 5000,
+  socketTimeoutMS: 45000,
+})
   .then(() => logger.info('Connected to MongoDB'))
-  .catch(err => logger.error('MongoDB connection error:', err));
+  .catch(err => {
+    logger.error('MongoDB connection error:', err);
+    // Attempt to reconnect after 5 seconds
+    setTimeout(() => {
+      logger.info('Attempting to reconnect to MongoDB...');
+      mongoose.connect(process.env.MONGO_URI);
+    }, 5000);
+  });
+
+// MongoDB connection monitoring
+mongoose.connection.on('error', err => {
+  logger.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected');
+  // Attempt to reconnect after 5 seconds
+  setTimeout(() => {
+    logger.info('Attempting to reconnect to MongoDB...');
+    mongoose.connect(process.env.MONGO_URI);
+  }, 5000);
+});
+
+// Bot polling error handling
+bot.on('polling_error', (error) => {
+  logger.error('Polling error:', error);
+  // Restart polling after delay
+  setTimeout(() => {
+    logger.info('Restarting bot polling...');
+    bot.startPolling();
+  }, 5000);
+});
 
 // Custom keyboard layout similar to the screenshot
 const customKeyboard = {
@@ -1224,11 +1270,46 @@ setInterval(async () => {
   }
 }, 24 * 60 * 60 * 1000); // Run once a day
 
-// Global error handler
+// Memory monitoring
+setInterval(() => {
+  const used = process.memoryUsage();
+  logger.info(`Memory usage: ${Math.round(used.rss / 1024 / 1024)}MB RSS`);
+}, 300000); // Check every 5 minutes
+
+// Global error handlers with restart logic
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
+  // Attempt graceful restart
+  setTimeout(() => {
+    process.exit(1); // Will trigger restart if using proper process manager
+  }, 1000);
 });
+
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Attempt graceful restart
+  setTimeout(() => {
+    process.exit(1); // Will trigger restart if using proper process manager
+  }, 1000);
 });
-logger.info('Bot started');
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  bot.stopPolling();
+  mongoose.connection.close(() => {
+    logger.info('MongoDB connection closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  bot.stopPolling();
+  mongoose.connection.close(() => {
+    logger.info('MongoDB connection closed');
+    process.exit(0);
+  });
+});
+
+logger.info('Bot started successfully');
