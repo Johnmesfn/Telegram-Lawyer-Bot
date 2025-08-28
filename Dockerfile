@@ -1,18 +1,24 @@
-# Use official Node.js LTS image
 FROM node:18-alpine
 
-# Set working directory
+# Create app directory
 WORKDIR /usr/src/app
 
-# Copy package files and install dependencies
+# Install dependencies
 COPY package*.json ./
-RUN npm install --production
+RUN npm install
 
-# Copy the rest of the source code
+# Bundle app source
 COPY . .
 
-# Expose port (for Express if you add web interface later)
+# Make scripts executable
+RUN chmod +x start.sh healthcheck.js
+
+# Expose port
 EXPOSE 3000
 
-# Start the bot
-CMD ["node", "bot.js"]
+# Add health check
+HEALTHCHECK --interval=5m --timeout=3s --start-period=5s --retries=3 \
+  CMD node healthcheck.js
+
+# Start the application
+CMD ["./start.sh"]
